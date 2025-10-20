@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Test API Request</title>
+</head>
+<body>
+  <h1>Test API Request</h1>
+  <input id="domainInput" type="text" placeholder="Enter domain" value="example.com">
+  <button id="testButton">Test Generate Variants</button>
+  <button id="testGetButton">Test GET endpoint</button>
+  <pre id="result" style="border: 1px solid #ccc; padding: 10px; margin-top: 20px;"></pre>
+
+  <script>
+    const resultEl = document.getElementById('result');
+
+    document.getElementById('testButton').addEventListener('click', async () => {
+      const domain = document.getElementById('domainInput').value;
+      resultEl.textContent = `Sending request for ${domain}...`;
+      
+      try {
+        const response = await fetch('http://localhost:3001/api/v1/domains/variants/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ domain })
+        });
+        
+        const data = await response.json();
+        resultEl.textContent = JSON.stringify(data, null, 2);
+      } catch (err) {
+        resultEl.textContent = `Error: ${err.message}`;
+      }
+    });
+
+    document.getElementById('testGetButton').addEventListener('click', async () => {
+      resultEl.textContent = 'Sending GET request...';
+      
+      try {
+        const response = await fetch('http://localhost:3001/api/v1/test');
+        const data = await response.json();
+        resultEl.textContent = JSON.stringify(data, null, 2);
+      } catch (err) {
+        resultEl.textContent = `Error: ${err.message}`;
+      }
+    });
+  </script>
+</body>
+</html>

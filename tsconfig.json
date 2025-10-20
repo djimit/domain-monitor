@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "commonjs",
+    "strict": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "outDir": "./dist",
+    "rootDir": "./",
+    "types": ["jest", "node"]
+  },
+  "include": [
+    "domain-variant-service/src/**/*.ts",
+    "domain-variant-service/test/**/*.ts"
+  ]
+}
