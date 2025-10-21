@@ -1,0 +1,96 @@
+version: 2
+updates:
+  # Root workspace dependencies
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "djimit"
+    assignees:
+      - "djimit"
+    labels:
+      - "dependencies"
+      - "automated"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    pull-request-branch-name:
+      separator: "/"
+    # Group minor and patch updates
+    groups:
+      production-dependencies:
+        dependency-type: "production"
+        update-types:
+          - "minor"
+          - "patch"
+      development-dependencies:
+        dependency-type: "development"
+        update-types:
+          - "minor"
+          - "patch"
+    # Ignore major version updates for packages that require manual testing
+    ignore:
+      - dependency-name: "express"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "node-fetch"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "express-rate-limit"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+
+  # Frontend dependencies
+  - package-ecosystem: "npm"
+    directory: "/domain-monitor-frontend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "djimit"
+    labels:
+      - "dependencies"
+      - "frontend"
+      - "automated"
+    commit-message:
+      prefix: "chore"
+      prefix-development: "chore"
+      include: "scope"
+
+  # Backend service dependencies
+  - package-ecosystem: "npm"
+    directory: "/domain-variant-service"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "djimit"
+    labels:
+      - "dependencies"
+      - "backend"
+      - "automated"
+    commit-message:
+      prefix: "chore"
+      prefix-development: "chore"
+      include: "scope"
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    reviewers:
+      - "djimit"
+    labels:
+      - "dependencies"
+      - "github-actions"
+      - "automated"
