@@ -1,12 +1,12 @@
 // Domain Variant Generation Engine
 // Implements core permutation algorithms for typosquatting and fraudulent domain variants
 
-interface VariantOptions {
+export interface VariantOptions {
   tlds?: string[];
   maxVariants?: number;
 }
 
-function generateDomainVariants(
+export function generateDomainVariants(
   domainOrCompany: string,
   options: VariantOptions = {}
 ): string[] {
@@ -128,5 +128,3 @@ function generateDomainVariants(
 
   return result;
 }
-
-module.exports = { generateDomainVariants };
