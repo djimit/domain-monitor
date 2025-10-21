@@ -5,6 +5,10 @@ interface ReportsPanelProps {
   scanId?: string | null;
 }
 
+// Use environment variable for API URL
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
+const API_VERSION = import.meta.env.VITE_API_VERSION || 'v1';
+
 const ReportsPanel: React.FC<ReportsPanelProps> = ({ scanId }) => {
   const [loading, setLoading] = useState(false);
   const [reportId, setReportId] = useState<string | null>(null);
@@ -21,7 +25,7 @@ const ReportsPanel: React.FC<ReportsPanelProps> = ({ scanId }) => {
     setReportId(null);
     setDownloadUrl(null);
     try {
-      const res = await fetch('/api/v1/reports', {
+      const res = await fetch(`${API_BASE_URL}/api/${API_VERSION}/reports`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ scanId })
@@ -31,12 +35,12 @@ const ReportsPanel: React.FC<ReportsPanelProps> = ({ scanId }) => {
       const id = data.data.reportId || data.data.id;
       setReportId(id);
       // Fetch download URL
-      const downloadRes = await fetch(`/api/v1/reports/${id}/download`);
+      const downloadRes = await fetch(`${API_BASE_URL}/api/${API_VERSION}/reports/${id}/download`);
       if (!downloadRes.ok) throw new Error('Failed to fetch report download link');
       const blob = await downloadRes.blob();
       setDownloadUrl(URL.createObjectURL(blob));
     } catch (err: any) {
-      setError(err.message || 'Unknown error');
+      setError(err.message || 'Failed to generate report. Please try again.');
     } finally {
       setLoading(false);
     }

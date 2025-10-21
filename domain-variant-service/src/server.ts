@@ -1,151 +1,491 @@
-const express = require('express');
-const cors = require('cors');
-const { generateDomainVariants } = require('./variantGenerator');
-const dns = require('dns');
-const fetch = require('node-fetch');
-const { AbortController } = require('abort-controller');
+// Domain Variant Service - Main Server
+import express, { Request, Response, NextFunction } from 'express';
+import cors from 'cors';
+import rateLimit from 'express-rate-limit';
+import dns from 'dns';
+import fetch from 'node-fetch';
+import { AbortController } from 'abort-controller';
+import { generateDomainVariants } from './variantGenerator';
+import { config } from './config';
+import { logger } from './logger';
+import {
+  validateDomainGeneration,
+  validateScanRequest,
+  validateReportRequest,
+  handleValidationErrors,
+} from './validators';
 
 const app = express();
-const PORT = 3000;
 
-app.use(cors());
-app.use(express.json());
+// Trust proxy for rate limiting behind reverse proxy
+app.set('trust proxy', 1);
 
-// In-memory store for scans and results (mock)
-const scans = {};
-const scanResults = {};
+// CORS configuration
+const corsOptions = {
+  origin: config.corsOrigin,
+  credentials: true,
+  optionsSuccessStatus: 200,
+};
+app.use(cors(corsOptions));
 
-app.post('/api/v1/domains/variants/generate', (req, res) => {
-  const { domain } = req.body;
-  if (!domain || typeof domain !== 'string') {
-    return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Missing or invalid domain' } });
-  }
-  try {
-    const variants = generateDomainVariants(domain);
-    res.json({
-      data: { variants },
-      meta: { timestamp: new Date().toISOString(), version: '1.0' }
-    });
-  } catch (err) {
-    res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: err.message } });
-  }
-});
+// Body parser
+app.use(express.json({ limit: '10mb' }));
 
-// Create scan job
-app.post('/api/v1/scans', async (req, res) => {
-  const { variants } = req.body;
-  if (!Array.isArray(variants) || variants.length === 0) {
-    return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Missing or invalid variants' } });
-  }
-  const scanId = 'scan_' + Math.random().toString(36).substr(2, 9);
-  scans[scanId] = { variants, status: 'in_progress' };
-
-  // Perform DNS and HTTP checks for each variant
-  const results = await Promise.all(
-    variants.map(async (v: string) => {
-      let dnsResolved = false;
-      let httpStatus: number | null = null;
-      let error: string | null = null;
-      try {
-        // DNS lookup
-        const host = v.replace(/^https?:\/\//, '');
-        await dns.promises.lookup(host);
-        dnsResolved = true;
-      } catch (e) {
-        error = 'DNS lookup failed';
-        console.error(`DNS lookup failed for ${v}:`, e);
-      }
-      if (dnsResolved) {
-        try {
-          const url = v.startsWith('http') ? v : `http://${v}`;
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 5000);
-          const resp = await fetch(url, { method: 'HEAD', signal: controller.signal });
-          clearTimeout(timeout);
-          httpStatus = resp.status;
-        } catch (e) {
-          error = 'HTTP fetch failed';
-          console.error(`HTTP fetch failed for ${v}:`, e);
-        }
-      }
-      return {
-        domain: v,
-        dnsResolved,
-        httpStatus,
-        error,
-        status: dnsResolved ? 'scanned' : 'unreachable'
-      };
-    })
-  ).catch(e => {
-    // Catch any unexpected errors in the Promise.all
-    console.error('Unexpected error in scan Promise.all:', e);
-    return [];
+// Request logging middleware
+app.use((req: Request, _res: Response, next: NextFunction) => {
+  logger.info('Incoming request', {
+    method: req.method,
+    path: req.path,
+    ip: req.ip,
   });
-  
-  scans[scanId].status = 'completed';
-  scanResults[scanId] = results;
-  res.json({ data: { scanId } });
+  next();
 });
+
+// Rate limiting
+const limiter = rateLimit({
+  windowMs: config.rateLimit.windowMs,
+  max: config.rateLimit.maxRequests,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: {
+      code: 'RATE_LIMIT_EXCEEDED',
+      message: 'Too many requests, please try again later.',
+    },
+  },
+});
+app.use('/api/', limiter);
+
+// In-memory storage (TODO: Replace with database)
+interface ScanData {
+  variants: string[];
+  status: 'in_progress' | 'completed' | 'failed';
+  createdAt: Date;
+}
+
+interface ScanResult {
+  domain: string;
+  dnsResolved: boolean;
+  httpStatus: number | null;
+  error: string | null;
+  status: 'scanned' | 'unreachable';
+  scannedAt: Date;
+}
+
+const scans: Record<string, ScanData> = {};
+const scanResults: Record<string, ScanResult[]> = {};
+
+// Helper function to generate unique IDs
+function generateId(prefix: string): string {
+  return `${prefix}_${Math.random().toString(36).substring(2, 11)}`;
+}
+
+// Helper function for DNS lookup with timeout
+async function dnsLookup(hostname: string, timeoutMs: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      resolve(false);
+    }, timeoutMs);
+
+    dns.lookup(hostname, (err) => {
+      clearTimeout(timer);
+      resolve(!err);
+    });
+  });
+}
+
+// Helper function for HTTP request with timeout
+async function httpCheck(
+  url: string,
+  timeoutMs: number
+): Promise<{ status: number | null; error: string | null }> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+    const response = await fetch(url, {
+      method: 'HEAD',
+      signal: controller.signal as any,
+      redirect: 'manual',
+    });
+
+    clearTimeout(timeout);
+    return { status: response.status, error: null };
+  } catch (error: any) {
+    return { status: null, error: error.message || 'HTTP request failed' };
+  }
+}
+
+// API Routes
+
+// Health check endpoint
+app.get('/health', (_req: Request, res: Response) => {
+  res.json({
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    version: config.apiVersion,
+  });
+});
+
+// Generate domain variants
+app.post(
+  `/api/${config.apiVersion}/domains/variants/generate`,
+  validateDomainGeneration,
+  handleValidationErrors,
+  (req: Request, res: Response) => {
+    const { domain } = req.body;
+
+    try {
+      logger.info('Generating variants', { domain });
+      const variants = generateDomainVariants(domain);
+
+      logger.info('Variants generated', {
+        domain,
+        count: variants.length,
+      });
+
+      res.json({
+        data: { variants },
+        meta: {
+          timestamp: new Date().toISOString(),
+          version: config.apiVersion,
+        },
+      });
+    } catch (error: any) {
+      logger.error('Error generating variants', {
+        domain,
+        error: error.message,
+        stack: error.stack,
+      });
+
+      res.status(500).json({
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'Failed to generate domain variants',
+        },
+      });
+    }
+  }
+);
+
+// Create and execute scan job
+app.post(
+  `/api/${config.apiVersion}/scans`,
+  validateScanRequest,
+  handleValidationErrors,
+  async (req: Request, res: Response) => {
+    const { variants } = req.body;
+    const scanId = generateId('scan');
+
+    try {
+      logger.info('Starting scan', { scanId, variantCount: variants.length });
+
+      scans[scanId] = {
+        variants,
+        status: 'in_progress',
+        createdAt: new Date(),
+      };
+
+      // Perform DNS and HTTP checks for each variant
+      const results: ScanResult[] = await Promise.all(
+        variants.map(async (variant: string) => {
+          let dnsResolved = false;
+          let httpStatus: number | null = null;
+          let error: string | null = null;
+
+          try {
+            // Remove protocol if present
+            const hostname = variant.replace(/^https?:\/\//, '');
+
+            // DNS lookup
+            dnsResolved = await dnsLookup(hostname, config.scanning.dnsTimeoutMs);
+
+            if (!dnsResolved) {
+              error = 'DNS lookup failed';
+            }
+          } catch (e: any) {
+            error = `DNS error: ${e.message}`;
+            logger.debug('DNS lookup error', { variant, error: e.message });
+          }
+
+          // HTTP check if DNS resolved
+          if (dnsResolved) {
+            try {
+              const url = variant.startsWith('http') ? variant : `http://${variant}`;
+              const result = await httpCheck(url, config.scanning.httpTimeoutMs);
+              httpStatus = result.status;
+              if (result.error) {
+                error = result.error;
+              }
+            } catch (e: any) {
+              error = `HTTP error: ${e.message}`;
+              logger.debug('HTTP check error', { variant, error: e.message });
+            }
+          }
+
+          return {
+            domain: variant,
+            dnsResolved,
+            httpStatus,
+            error,
+            status: dnsResolved ? 'scanned' : 'unreachable',
+            scannedAt: new Date(),
+          } as ScanResult;
+        })
+      );
+
+      scans[scanId].status = 'completed';
+      scanResults[scanId] = results;
+
+      logger.info('Scan completed', {
+        scanId,
+        totalVariants: variants.length,
+        resolved: results.filter((r) => r.dnsResolved).length,
+        unreachable: results.filter((r) => !r.dnsResolved).length,
+      });
+
+      res.json({
+        data: { scanId },
+        meta: {
+          timestamp: new Date().toISOString(),
+          version: config.apiVersion,
+        },
+      });
+    } catch (error: any) {
+      scans[scanId].status = 'failed';
+      logger.error('Scan failed', {
+        scanId,
+        error: error.message,
+        stack: error.stack,
+      });
+
+      res.status(500).json({
+        error: {
+          code: 'SCAN_FAILED',
+          message: 'Failed to complete scan',
+        },
+      });
+    }
+  }
+);
 
 // Get scan results
-app.get('/api/v1/scans/:id/results', (req, res) => {
+app.get(`/api/${config.apiVersion}/scans/:id/results`, (req: Request, res: Response): void => {
   const { id } = req.params;
+
   if (!scanResults[id]) {
-    return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Scan results not found' } });
+    logger.warn('Scan results not found', { scanId: id });
+    res.status(404).json({
+      error: {
+        code: 'NOT_FOUND',
+        message: 'Scan results not found',
+      },
+    });
+    return;
   }
-  res.json({ data: { results: scanResults[id] } });
+
+  logger.info('Retrieving scan results', { scanId: id });
+
+  res.json({
+    data: { results: scanResults[id] },
+    meta: {
+      timestamp: new Date().toISOString(),
+      version: config.apiVersion,
+      scanStatus: scans[id]?.status || 'unknown',
+    },
+  });
 });
 
-// Report generation endpoints
-app.post('/api/v1/reports', (req, res) => {
-  const { scanId } = req.body;
-  if (!scanId || !scanResults[scanId]) {
-    return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Invalid or missing scanId' } });
-  }
-  const reportId = 'report_' + Math.random().toString(36).substr(2, 9);
-  res.json({ data: { reportId } });
-});
+// Generate report
+app.post(
+  `/api/${config.apiVersion}/reports`,
+  validateReportRequest,
+  handleValidationErrors,
+  (req: Request, res: Response): void => {
+    const { scanId } = req.body;
 
-// Download report endpoint
-app.get('/api/v1/reports/:id/download', (req, res) => {
+    if (!scanResults[scanId]) {
+      logger.warn('Cannot generate report, scan not found', { scanId });
+      res.status(400).json({
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Invalid or missing scanId',
+        },
+      });
+      return;
+    }
+
+    const reportId = generateId('report');
+    logger.info('Report generated', { reportId, scanId });
+
+    res.json({
+      data: { reportId, scanId },
+      meta: {
+        timestamp: new Date().toISOString(),
+        version: config.apiVersion,
+      },
+    });
+  }
+);
+
+// Download report
+app.get(`/api/${config.apiVersion}/reports/:id/download`, (req: Request, res: Response): void => {
   const { id } = req.params;
+
   if (!id || !id.startsWith('report_')) {
-    return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Report not found' } });
+    logger.warn('Invalid report ID', { reportId: id });
+    res.status(404).json({
+      error: {
+        code: 'NOT_FOUND',
+        message: 'Report not found',
+      },
+    });
+    return;
   }
-  
-  // Generate a simple HTML report
+
+  logger.info('Downloading report', { reportId: id });
+
+  // Generate HTML report
   const html = `
     <!DOCTYPE html>
-    <html>
+    <html lang="en">
       <head>
-        <title>Domain Scan Report</title>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Domain Security Scan Report</title>
         <style>
-          body { font-family: Arial, sans-serif; margin: 20px; }
-          h1 { color: #333; }
-          table { border-collapse: collapse; width: 100%; }
-          th, td { border: 1px solid #ddd; padding: 8px; }
-          tr:nth-child(even) { background-color: #f2f2f2; }
-          th { padding-top: 12px; padding-bottom: 12px; text-align: left; background-color: #4CAF50; color: white; }
+          body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+          }
+          .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+          }
+          h1 {
+            color: #333;
+            border-bottom: 3px solid #4CAF50;
+            padding-bottom: 10px;
+          }
+          h2 {
+            color: #555;
+            margin-top: 30px;
+          }
+          .metadata {
+            background: #f9f9f9;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 20px 0;
+          }
+          .metadata p {
+            margin: 5px 0;
+          }
+          table {
+            border-collapse: collapse;
+            width: 100%;
+            margin-top: 20px;
+          }
+          th, td {
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+          }
+          th {
+            background-color: #4CAF50;
+            color: white;
+            font-weight: 600;
+          }
+          tr:nth-child(even) {
+            background-color: #f2f2f2;
+          }
+          tr:hover {
+            background-color: #e8e8e8;
+          }
+          .footer {
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 1px solid #ddd;
+            color: #777;
+            font-size: 14px;
+          }
         </style>
       </head>
       <body>
-        <h1>Domain Security Scan Report</h1>
-        <p>Report ID: ${id}</p>
-        <p>Generated: ${new Date().toLocaleString()}</p>
-        <h2>Summary</h2>
-        <p>This report contains the results of a security scan for potentially malicious domain variants.</p>
-        <h2>Details</h2>
-        <p>This is a sample report. In a production environment, this would include comprehensive details about each domain scanned.</p>
+        <div class="container">
+          <h1>Domain Security Scan Report</h1>
+
+          <div class="metadata">
+            <p><strong>Report ID:</strong> ${id}</p>
+            <p><strong>Generated:</strong> ${new Date().toLocaleString()}</p>
+            <p><strong>Service Version:</strong> ${config.apiVersion}</p>
+          </div>
+
+          <h2>Summary</h2>
+          <p>
+            This report contains the results of a comprehensive security scan for potentially
+            malicious domain variants. The scan checks for typosquatting, cybersquatting, and
+            other domain-based threats.
+          </p>
+
+          <h2>Scan Details</h2>
+          <p>
+            This is a sample report generated by the Domain Monitor service. In a production
+            environment, this report would include comprehensive details about each domain scanned,
+            including DNS resolution status, HTTP response codes, SSL certificate information,
+            WHOIS data, and threat intelligence indicators.
+          </p>
+
+          <div class="footer">
+            <p>Generated by Domain Monitor Service v${config.apiVersion}</p>
+            <p>&copy; ${new Date().getFullYear()} - For authorized use only</p>
+          </div>
+        </div>
       </body>
     </html>
   `;
-  
+
   res.setHeader('Content-Type', 'text/html');
   res.setHeader('Content-Disposition', `attachment; filename=report-${id}.html`);
   res.send(html);
 });
 
-app.listen(PORT, () => {
-  // eslint-disable-next-line no-console
-  console.log(`Domain Variant Service running at http://localhost:${PORT}`);
+// 404 handler
+app.use((_req: Request, res: Response) => {
+  res.status(404).json({
+    error: {
+      code: 'NOT_FOUND',
+      message: 'Endpoint not found',
+    },
+  });
 });
+
+// Error handler
+app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
+  logger.error('Unhandled error', {
+    error: err.message,
+    stack: err.stack,
+  });
+
+  res.status(500).json({
+    error: {
+      code: 'INTERNAL_ERROR',
+      message: config.nodeEnv === 'development' ? err.message : 'Internal server error',
+    },
+  });
+});
+
+// Start server
+app.listen(config.port, () => {
+  logger.info(`Domain Variant Service started`, {
+    port: config.port,
+    environment: config.nodeEnv,
+    apiVersion: config.apiVersion,
+  });
+});
+
+export default app;

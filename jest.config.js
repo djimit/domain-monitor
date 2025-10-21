@@ -5,11 +5,21 @@ module.exports = {
   testMatch: [
     '<rootDir>/domain-variant-service/test/**/*.test.ts'
   ],
-  moduleFileExtensions: ['ts', 'js', 'json'],
+  moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
   roots: ['<rootDir>/domain-variant-service'],
-  globals: {
-    'ts-jest': {
-      tsconfig: 'tsconfig.json'
-    }
-  }
+  transform: {
+    '^.+\\.tsx?$': ['ts-jest', {
+      tsconfig: {
+        esModuleInterop: true,
+        allowSyntheticDefaultImports: true,
+      }
+    }]
+  },
+  moduleNameMapper: {
+    '^@/(.*)$': '<rootDir>/domain-variant-service/src/$1'
+  },
+  collectCoverageFrom: [
+    'domain-variant-service/src/**/*.{ts,tsx}',
+    '!domain-variant-service/src/**/*.d.ts',
+  ],
 };

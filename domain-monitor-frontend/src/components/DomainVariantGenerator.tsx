@@ -5,8 +5,10 @@ interface VariantGeneratorProps {
   onVariantsSelected: (variants: string[]) => void;
 }
 
-// Try direct URL instead of proxy
-const API_URL = 'http://localhost:3001/api/v1/domains/variants/generate';
+// Use environment variable for API URL
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
+const API_VERSION = import.meta.env.VITE_API_VERSION || 'v1';
+const API_URL = `${API_BASE_URL}/api/${API_VERSION}/domains/variants/generate`;
 
 const DomainVariantGenerator: React.FC<VariantGeneratorProps> = ({ onVariantsSelected }) => {
   const [input, setInput] = useState('');
@@ -21,7 +23,6 @@ const DomainVariantGenerator: React.FC<VariantGeneratorProps> = ({ onVariantsSel
     setVariants([]);
     setSelected([]);
     try {
-      console.log('Sending request to', API_URL, 'with domain:', input);
       const res = await fetch(API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -29,15 +30,12 @@ const DomainVariantGenerator: React.FC<VariantGeneratorProps> = ({ onVariantsSel
       });
       if (!res.ok) {
         const errorText = await res.text();
-        console.error('Error response:', res.status, errorText);
-        throw new Error(`Failed to generate variants: ${res.status} ${errorText}`);
+        throw new Error(`Failed to generate variants: ${res.status}`);
       }
       const data = await res.json();
-      console.log('Received response:', data);
       setVariants(data.data.variants || []);
     } catch (err: any) {
-      console.error('Error in handleGenerate:', err);
-      setError(err.message || 'Unknown error');
+      setError(err.message || 'Failed to generate variants. Please try again.');
     } finally {
       setLoading(false);
     }
