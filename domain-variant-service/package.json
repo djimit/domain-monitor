@@ -23,9 +23,12 @@
   "devDependencies": {
     "@types/cors": "^2.8.18",
     "@types/express": "^5.0.2",
+    "@types/jest": "^30.0.0",
     "@types/node": "^20.11.5",
     "@types/node-fetch": "^2.6.11",
+    "jest": "^30.2.0",
     "nodemon": "^3.1.10",
+    "ts-jest": "^29.4.6",
     "ts-node": "^10.9.1",
     "typescript": "^5.8.3"
   }
