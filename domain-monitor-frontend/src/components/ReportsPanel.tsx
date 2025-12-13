@@ -5,13 +5,14 @@ interface ReportsPanelProps {
   scanId?: string | null;
 }
 
-// Use environment variable for API URL
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
+// Use environment variable for API URL - throw error if not set in production
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || (import.meta.env.MODE === 'production'
+  ? (() => { throw new Error('VITE_API_BASE_URL must be set in production'); })()
+  : 'http://localhost:3001');
 const API_VERSION = import.meta.env.VITE_API_VERSION || 'v1';
 
 const ReportsPanel: React.FC<ReportsPanelProps> = ({ scanId }) => {
   const [loading, setLoading] = useState(false);
-  const [reportId, setReportId] = useState<string | null>(null);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -22,7 +23,6 @@ const ReportsPanel: React.FC<ReportsPanelProps> = ({ scanId }) => {
     }
     setLoading(true);
     setError(null);
-    setReportId(null);
     setDownloadUrl(null);
     try {
       const res = await fetch(`${API_BASE_URL}/api/${API_VERSION}/reports`, {
@@ -33,7 +33,6 @@ const ReportsPanel: React.FC<ReportsPanelProps> = ({ scanId }) => {
       if (!res.ok) throw new Error('Failed to generate report');
       const data = await res.json();
       const id = data.data.reportId || data.data.id;
-      setReportId(id);
       // Fetch download URL
       const downloadRes = await fetch(`${API_BASE_URL}/api/${API_VERSION}/reports/${id}/download`);
       if (!downloadRes.ok) throw new Error('Failed to fetch report download link');

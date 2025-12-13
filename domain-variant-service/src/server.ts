@@ -3,8 +3,8 @@ import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import dns from 'dns';
+import crypto from 'crypto';
 import fetch from 'node-fetch';
-import { AbortController } from 'abort-controller';
 import { generateDomainVariants } from './variantGenerator';
 import { config } from './config';
 import { logger } from './logger';
@@ -30,6 +30,18 @@ app.use(cors(corsOptions));
 
 // Body parser
 app.use(express.json({ limit: '10mb' }));
+
+// Security headers middleware
+app.use((_req: Request, res: Response, next: NextFunction) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'");
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+  next();
+});
 
 // Request logging middleware
 app.use((req: Request, _res: Response, next: NextFunction) => {
@@ -75,9 +87,50 @@ interface ScanResult {
 const scans: Record<string, ScanData> = {};
 const scanResults: Record<string, ScanResult[]> = {};
 
-// Helper function to generate unique IDs
+// Data retention configuration: clean up old scans after 24 hours
+const DATA_RETENTION_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+// Cleanup function to remove old scan and report data
+function cleanupOldScans(): void {
+  const now = new Date();
+  let cleanedScansCount = 0;
+  let cleanedReportsCount = 0;
+
+  // Clean up old scans
+  for (const [scanId, scanData] of Object.entries(scans)) {
+    const age = now.getTime() - scanData.createdAt.getTime();
+    if (age > DATA_RETENTION_MS) {
+      delete scans[scanId];
+      delete scanResults[scanId];
+      cleanedScansCount++;
+    }
+  }
+
+  // Clean up old reports (defined later in code but accessed via closure)
+  if (typeof reports !== 'undefined') {
+    for (const [reportId, reportData] of Object.entries(reports)) {
+      const age = now.getTime() - reportData.createdAt.getTime();
+      if (age > DATA_RETENTION_MS) {
+        delete reports[reportId];
+        cleanedReportsCount++;
+      }
+    }
+  }
+
+  if (cleanedScansCount > 0 || cleanedReportsCount > 0) {
+    logger.info('Cleaned up old data', {
+      scans: cleanedScansCount,
+      reports: cleanedReportsCount,
+    });
+  }
+}
+
+// Run cleanup every hour
+setInterval(cleanupOldScans, 60 * 60 * 1000);
+
+// Helper function to generate unique IDs using cryptographically secure random bytes
 function generateId(prefix: string): string {
-  return `${prefix}_${Math.random().toString(36).substring(2, 11)}`;
+  return `${prefix}_${crypto.randomBytes(16).toString('hex')}`;
 }
 
 // Helper function for DNS lookup with timeout
@@ -118,8 +171,8 @@ async function httpCheck(
 
 // API Routes
 
-// Health check endpoint
-app.get('/health', (_req: Request, res: Response) => {
+// Health check endpoint with rate limiting
+app.get('/health', limiter, (_req: Request, res: Response) => {
   res.json({
     status: 'healthy',
     timestamp: new Date().toISOString(),
@@ -155,7 +208,7 @@ app.post(
       logger.error('Error generating variants', {
         domain,
         error: error.message,
-        stack: error.stack,
+        ...(config.nodeEnv === 'development' && { stack: error.stack }),
       });
 
       res.status(500).json({
@@ -256,7 +309,7 @@ app.post(
       logger.error('Scan failed', {
         scanId,
         error: error.message,
-        stack: error.stack,
+        ...(config.nodeEnv === 'development' && { stack: error.stack }),
       });
 
       res.status(500).json({
@@ -296,6 +349,13 @@ app.get(`/api/${config.apiVersion}/scans/:id/results`, (req: Request, res: Respo
   });
 });
 
+// In-memory report storage with metadata
+interface ReportData {
+  scanId: string;
+  createdAt: Date;
+}
+const reports: Record<string, ReportData> = {};
+
 // Generate report
 app.post(
   `/api/${config.apiVersion}/reports`,
@@ -316,6 +376,10 @@ app.post(
     }
 
     const reportId = generateId('report');
+    reports[reportId] = {
+      scanId,
+      createdAt: new Date(),
+    };
     logger.info('Report generated', { reportId, scanId });
 
     res.json({
@@ -332,8 +396,9 @@ app.post(
 app.get(`/api/${config.apiVersion}/reports/:id/download`, (req: Request, res: Response): void => {
   const { id } = req.params;
 
-  if (!id || !id.startsWith('report_')) {
-    logger.warn('Invalid report ID', { reportId: id });
+  // Validate report ID format and existence
+  if (!id || !id.startsWith('report_') || !reports[id]) {
+    logger.warn('Invalid or non-existent report ID', { reportId: id });
     res.status(404).json({
       error: {
         code: 'NOT_FOUND',
@@ -343,7 +408,8 @@ app.get(`/api/${config.apiVersion}/reports/:id/download`, (req: Request, res: Re
     return;
   }
 
-  logger.info('Downloading report', { reportId: id });
+  const reportData = reports[id];
+  logger.info('Downloading report', { reportId: id, scanId: reportData.scanId });
 
   // Generate HTML report
   const html = `
@@ -468,7 +534,7 @@ app.use((_req: Request, res: Response) => {
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   logger.error('Unhandled error', {
     error: err.message,
-    stack: err.stack,
+    ...(config.nodeEnv === 'development' && { stack: err.stack }),
   });
 
   res.status(500).json({

@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const crypto = require('crypto');
 const { generateDomainVariants } = require('./variantGenerator');
 const dns = require('dns');
 const fetch = require('node-fetch');
@@ -8,9 +9,10 @@ const { AbortController } = require('abort-controller');
 const app = express();
 const PORT = 3001;
 
-// Configure CORS for all routes
+// Configure CORS for all routes - restrict to localhost for development
 app.use(cors({
-  origin: '*',
+  origin: process.env.CORS_ORIGIN || 'http://localhost:5173',
+  credentials: true,
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
@@ -18,7 +20,6 @@ app.use(express.json());
 
 // Add a simple test route
 app.get('/api/v1/test', (req, res) => {
-  console.log('Test endpoint called');
   res.json({ status: 'ok', message: 'Domain Variant Service is running' });
 });
 
@@ -27,23 +28,18 @@ const scans = {};
 const scanResults = {};
 
 app.post('/api/v1/domains/variants/generate', (req, res) => {
-  console.log('Received request to generate variants:', req.body);
   const { domain } = req.body;
   if (!domain || typeof domain !== 'string') {
-    console.log('Validation error: domain is missing or not a string');
     return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Missing or invalid domain' } });
   }
   try {
-    console.log('Generating variants for domain:', domain);
     const variants = generateDomainVariants(domain);
-    console.log(`Generated ${variants.length} variants`);
     res.json({
       data: { variants },
       meta: { timestamp: new Date().toISOString(), version: '1.0' }
     });
   } catch (err) {
-    console.error('Error generating variants:', err);
-    res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: err.message } });
+    res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: 'Failed to generate variants' } });
   }
 });
 
@@ -53,7 +49,7 @@ app.post('/api/v1/scans', async (req, res) => {
   if (!Array.isArray(variants) || variants.length === 0) {
     return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Missing or invalid variants' } });
   }
-  const scanId = 'scan_' + Math.random().toString(36).substr(2, 9);
+  const scanId = 'scan_' + crypto.randomBytes(16).toString('hex');
   scans[scanId] = { variants, status: 'in_progress' };
 
   // Perform DNS and HTTP checks for each variant
@@ -69,7 +65,6 @@ app.post('/api/v1/scans', async (req, res) => {
         dnsResolved = true;
       } catch (e) {
         error = 'DNS lookup failed';
-        console.error(`DNS lookup failed for ${v}:`, e);
       }
       if (dnsResolved) {
         try {
@@ -81,7 +76,6 @@ app.post('/api/v1/scans', async (req, res) => {
           httpStatus = resp.status;
         } catch (e) {
           error = 'HTTP fetch failed';
-          console.error(`HTTP fetch failed for ${v}:`, e);
         }
       }
       return {
@@ -92,9 +86,8 @@ app.post('/api/v1/scans', async (req, res) => {
         status: dnsResolved ? 'scanned' : 'unreachable'
       };
     })
-  ).catch(e => {
+  ).catch(() => {
     // Catch any unexpected errors in the Promise.all
-    console.error('Unexpected error in scan Promise.all:', e);
     return [];
   });
   
@@ -118,7 +111,7 @@ app.post('/api/v1/reports', (req, res) => {
   if (!scanId || !scanResults[scanId]) {
     return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Invalid or missing scanId' } });
   }
-  const reportId = 'report_' + Math.random().toString(36).substr(2, 9);
+  const reportId = 'report_' + crypto.randomBytes(16).toString('hex');
   res.json({ data: { reportId } });
 });
 
@@ -163,17 +156,15 @@ app.get('/api/v1/reports/:id/download', (req, res) => {
 
 // Add error handling for server startup
 const server = app.listen(PORT, () => {
-  console.log(`Domain Variant Service running at http://localhost:${PORT}`);
+  // Server started successfully
 });
 
 server.on('error', (error) => {
   if (error.code === 'EADDRINUSE') {
-    console.error(`Port ${PORT} is already in use. The server couldn't start.`);
-  } else {
-    console.error('Server error:', error.message);
+    process.exit(1);
   }
 });
 
-process.on('uncaughtException', (error) => {
-  console.error('Uncaught exception:', error);
+process.on('uncaughtException', () => {
+  process.exit(1);
 });

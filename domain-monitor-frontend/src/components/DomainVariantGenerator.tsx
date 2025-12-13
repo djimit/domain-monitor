@@ -5,8 +5,10 @@ interface VariantGeneratorProps {
   onVariantsSelected: (variants: string[]) => void;
 }
 
-// Use environment variable for API URL
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
+// Use environment variable for API URL - throw error if not set in production
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || (import.meta.env.MODE === 'production'
+  ? (() => { throw new Error('VITE_API_BASE_URL must be set in production'); })()
+  : 'http://localhost:3001');
 const API_VERSION = import.meta.env.VITE_API_VERSION || 'v1';
 const API_URL = `${API_BASE_URL}/api/${API_VERSION}/domains/variants/generate`;
 
@@ -29,7 +31,6 @@ const DomainVariantGenerator: React.FC<VariantGeneratorProps> = ({ onVariantsSel
         body: JSON.stringify({ domain: input })
       });
       if (!res.ok) {
-        const errorText = await res.text();
         throw new Error(`Failed to generate variants: ${res.status}`);
       }
       const data = await res.json();
