@@ -18,7 +18,7 @@ const App: React.FC = () => {
   const [selectedVariants, setSelectedVariants] = useState<string[]>([]);
   const [scanId, setScanId] = useState<string | null>(null);
 
-  const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
+  const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
     setTab(newValue);
   };
 
