@@ -8,7 +8,8 @@ export const logger = winston.createLogger({
   level: logLevel,
   format: winston.format.combine(
     winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
-    winston.format.errors({ stack: true }),
+    // Only include stack traces in development
+    winston.format.errors({ stack: config.nodeEnv === 'development' }),
     winston.format.splat(),
     winston.format.json()
   ),
