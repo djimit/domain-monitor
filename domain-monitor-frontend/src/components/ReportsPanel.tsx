@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Paper, Typography, Button, Alert, CircularProgress, Link } from '@mui/material';
 
 interface ReportsPanelProps {
@@ -33,13 +33,15 @@ const ReportsPanel: React.FC<ReportsPanelProps> = ({ scanId }) => {
       if (!res.ok) throw new Error('Failed to generate report');
       const data = await res.json();
       const id = data.data.reportId || data.data.id;
-      // Fetch download URL
-      const downloadRes = await fetch(`${API_BASE_URL}/api/${API_VERSION}/reports/${id}/download`);
+      if (!id) throw new Error('Invalid response: missing report ID');
+      // Fetch download URL - encode ID to prevent injection
+      const downloadRes = await fetch(`${API_BASE_URL}/api/${API_VERSION}/reports/${encodeURIComponent(id)}/download`);
       if (!downloadRes.ok) throw new Error('Failed to fetch report download link');
       const blob = await downloadRes.blob();
       setDownloadUrl(URL.createObjectURL(blob));
-    } catch (err: any) {
-      setError(err.message || 'Failed to generate report. Please try again.');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to generate report. Please try again.';
+      setError(message);
     } finally {
       setLoading(false);
     }

@@ -1,7 +1,7 @@
-import React from 'react';
+import { ReactElement } from 'react';
 import { Paper, Typography } from '@mui/material';
 
-const AlertsPanel: React.FC = () => (
+const AlertsPanel = (): ReactElement => (
   <Paper sx={{ p: 3 }}>
     <Typography variant="h5" gutterBottom>
       Alerts Panel

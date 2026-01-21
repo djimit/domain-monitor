@@ -35,9 +35,11 @@ app.use(express.json({ limit: '10mb' }));
 app.use((_req: Request, res: Response, next: NextFunction) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('X-XSS-Protection', '1; mode=block');
+  // Note: X-XSS-Protection is deprecated and removed - modern browsers don't need it
+  // and it can introduce vulnerabilities in some edge cases
   res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'");
+  // CSP: unsafe-inline needed for generated HTML reports with inline styles
+  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
   next();
@@ -133,6 +135,22 @@ function generateId(prefix: string): string {
   return `${prefix}_${crypto.randomBytes(16).toString('hex')}`;
 }
 
+// Helper function to escape HTML special characters to prevent XSS
+function escapeHtml(text: string): string {
+  const htmlEscapes: Record<string, string> = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  };
+  return text.replace(/[&<>"']/g, (char) => htmlEscapes[char]);
+}
+
+// Regex patterns for ID validation
+const SCAN_ID_PATTERN = /^scan_[a-f0-9]{32}$/;
+const REPORT_ID_PATTERN = /^report_[a-f0-9]{32}$/;
+
 // Helper function for DNS lookup with timeout
 async function dnsLookup(hostname: string, timeoutMs: number): Promise<boolean> {
   return new Promise((resolve) => {
@@ -158,14 +176,15 @@ async function httpCheck(
 
     const response = await fetch(url, {
       method: 'HEAD',
-      signal: controller.signal as any,
+      signal: controller.signal as AbortSignal,
       redirect: 'manual',
     });
 
     clearTimeout(timeout);
     return { status: response.status, error: null };
-  } catch (error: any) {
-    return { status: null, error: error.message || 'HTTP request failed' };
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'HTTP request failed';
+    return { status: null, error: message };
   }
 }
 
@@ -204,11 +223,13 @@ app.post(
           version: config.apiVersion,
         },
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorStack = error instanceof Error ? error.stack : undefined;
       logger.error('Error generating variants', {
         domain,
-        error: error.message,
-        ...(config.nodeEnv === 'development' && { stack: error.stack }),
+        error: errorMessage,
+        ...(config.nodeEnv === 'development' && errorStack && { stack: errorStack }),
       });
 
       res.status(500).json({
@@ -256,9 +277,10 @@ app.post(
             if (!dnsResolved) {
               error = 'DNS lookup failed';
             }
-          } catch (e: any) {
-            error = `DNS error: ${e.message}`;
-            logger.debug('DNS lookup error', { variant, error: e.message });
+          } catch (e: unknown) {
+            const errorMessage = e instanceof Error ? e.message : 'Unknown DNS error';
+            error = `DNS error: ${errorMessage}`;
+            logger.debug('DNS lookup error', { variant, error: errorMessage });
           }
 
           // HTTP check if DNS resolved
@@ -270,9 +292,10 @@ app.post(
               if (result.error) {
                 error = result.error;
               }
-            } catch (e: any) {
-              error = `HTTP error: ${e.message}`;
-              logger.debug('HTTP check error', { variant, error: e.message });
+            } catch (e: unknown) {
+              const errorMessage = e instanceof Error ? e.message : 'Unknown HTTP error';
+              error = `HTTP error: ${errorMessage}`;
+              logger.debug('HTTP check error', { variant, error: errorMessage });
             }
           }
 
@@ -304,12 +327,14 @@ app.post(
           version: config.apiVersion,
         },
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       scans[scanId].status = 'failed';
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorStack = error instanceof Error ? error.stack : undefined;
       logger.error('Scan failed', {
         scanId,
-        error: error.message,
-        ...(config.nodeEnv === 'development' && { stack: error.stack }),
+        error: errorMessage,
+        ...(config.nodeEnv === 'development' && errorStack && { stack: errorStack }),
       });
 
       res.status(500).json({
@@ -325,6 +350,18 @@ app.post(
 // Get scan results
 app.get(`/api/${config.apiVersion}/scans/:id/results`, (req: Request, res: Response): void => {
   const { id } = req.params;
+
+  // Validate scan ID format to prevent injection attacks
+  if (!id || !SCAN_ID_PATTERN.test(id)) {
+    logger.warn('Invalid scan ID format', { scanId: id });
+    res.status(400).json({
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: 'Invalid scan ID format',
+      },
+    });
+    return;
+  }
 
   if (!scanResults[id]) {
     logger.warn('Scan results not found', { scanId: id });
@@ -396,9 +433,20 @@ app.post(
 app.get(`/api/${config.apiVersion}/reports/:id/download`, (req: Request, res: Response): void => {
   const { id } = req.params;
 
-  // Validate report ID format and existence
-  if (!id || !id.startsWith('report_') || !reports[id]) {
-    logger.warn('Invalid or non-existent report ID', { reportId: id });
+  // Validate report ID format using strict regex pattern
+  if (!id || !REPORT_ID_PATTERN.test(id)) {
+    logger.warn('Invalid report ID format', { reportId: id });
+    res.status(400).json({
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: 'Invalid report ID format',
+      },
+    });
+    return;
+  }
+
+  if (!reports[id]) {
+    logger.warn('Report not found', { reportId: id });
     res.status(404).json({
       error: {
         code: 'NOT_FOUND',
@@ -411,112 +459,116 @@ app.get(`/api/${config.apiVersion}/reports/:id/download`, (req: Request, res: Re
   const reportData = reports[id];
   logger.info('Downloading report', { reportId: id, scanId: reportData.scanId });
 
-  // Generate HTML report
-  const html = `
-    <!DOCTYPE html>
-    <html lang="en">
-      <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Domain Security Scan Report</title>
-        <style>
-          body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-            margin: 20px;
-            background-color: #f5f5f5;
-          }
-          .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            background: white;
-            padding: 30px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-          }
-          h1 {
-            color: #333;
-            border-bottom: 3px solid #4CAF50;
-            padding-bottom: 10px;
-          }
-          h2 {
-            color: #555;
-            margin-top: 30px;
-          }
-          .metadata {
-            background: #f9f9f9;
-            padding: 15px;
-            border-radius: 4px;
-            margin: 20px 0;
-          }
-          .metadata p {
-            margin: 5px 0;
-          }
-          table {
-            border-collapse: collapse;
-            width: 100%;
-            margin-top: 20px;
-          }
-          th, td {
-            border: 1px solid #ddd;
-            padding: 12px;
-            text-align: left;
-          }
-          th {
-            background-color: #4CAF50;
-            color: white;
-            font-weight: 600;
-          }
-          tr:nth-child(even) {
-            background-color: #f2f2f2;
-          }
-          tr:hover {
-            background-color: #e8e8e8;
-          }
-          .footer {
-            margin-top: 40px;
-            padding-top: 20px;
-            border-top: 1px solid #ddd;
-            color: #777;
-            font-size: 14px;
-          }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <h1>Domain Security Scan Report</h1>
+  // Escape all dynamic content to prevent XSS
+  const safeReportId = escapeHtml(id);
+  const safeApiVersion = escapeHtml(config.apiVersion);
+  const safeTimestamp = escapeHtml(new Date().toLocaleString());
+  const safeYear = escapeHtml(String(new Date().getFullYear()));
 
-          <div class="metadata">
-            <p><strong>Report ID:</strong> ${id}</p>
-            <p><strong>Generated:</strong> ${new Date().toLocaleString()}</p>
-            <p><strong>Service Version:</strong> ${config.apiVersion}</p>
-          </div>
+  // Generate HTML report with escaped content
+  const html = `<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Domain Security Scan Report</title>
+    <style>
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        margin: 20px;
+        background-color: #f5f5f5;
+      }
+      .container {
+        max-width: 1200px;
+        margin: 0 auto;
+        background: white;
+        padding: 30px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      }
+      h1 {
+        color: #333;
+        border-bottom: 3px solid #4CAF50;
+        padding-bottom: 10px;
+      }
+      h2 {
+        color: #555;
+        margin-top: 30px;
+      }
+      .metadata {
+        background: #f9f9f9;
+        padding: 15px;
+        border-radius: 4px;
+        margin: 20px 0;
+      }
+      .metadata p {
+        margin: 5px 0;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        margin-top: 20px;
+      }
+      th, td {
+        border: 1px solid #ddd;
+        padding: 12px;
+        text-align: left;
+      }
+      th {
+        background-color: #4CAF50;
+        color: white;
+        font-weight: 600;
+      }
+      tr:nth-child(even) {
+        background-color: #f2f2f2;
+      }
+      tr:hover {
+        background-color: #e8e8e8;
+      }
+      .footer {
+        margin-top: 40px;
+        padding-top: 20px;
+        border-top: 1px solid #ddd;
+        color: #777;
+        font-size: 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Domain Security Scan Report</h1>
 
-          <h2>Summary</h2>
-          <p>
-            This report contains the results of a comprehensive security scan for potentially
-            malicious domain variants. The scan checks for typosquatting, cybersquatting, and
-            other domain-based threats.
-          </p>
+      <div class="metadata">
+        <p><strong>Report ID:</strong> ${safeReportId}</p>
+        <p><strong>Generated:</strong> ${safeTimestamp}</p>
+        <p><strong>Service Version:</strong> ${safeApiVersion}</p>
+      </div>
 
-          <h2>Scan Details</h2>
-          <p>
-            This is a sample report generated by the Domain Monitor service. In a production
-            environment, this report would include comprehensive details about each domain scanned,
-            including DNS resolution status, HTTP response codes, SSL certificate information,
-            WHOIS data, and threat intelligence indicators.
-          </p>
+      <h2>Summary</h2>
+      <p>
+        This report contains the results of a comprehensive security scan for potentially
+        malicious domain variants. The scan checks for typosquatting, cybersquatting, and
+        other domain-based threats.
+      </p>
 
-          <div class="footer">
-            <p>Generated by Domain Monitor Service v${config.apiVersion}</p>
-            <p>&copy; ${new Date().getFullYear()} - For authorized use only</p>
-          </div>
-        </div>
-      </body>
-    </html>
-  `;
+      <h2>Scan Details</h2>
+      <p>
+        This is a sample report generated by the Domain Monitor service. In a production
+        environment, this report would include comprehensive details about each domain scanned,
+        including DNS resolution status, HTTP response codes, SSL certificate information,
+        WHOIS data, and threat intelligence indicators.
+      </p>
+
+      <div class="footer">
+        <p>Generated by Domain Monitor Service v${safeApiVersion}</p>
+        <p>&copy; ${safeYear} - For authorized use only</p>
+      </div>
+    </div>
+  </body>
+</html>`;
 
   res.setHeader('Content-Type', 'text/html');
-  res.setHeader('Content-Disposition', `attachment; filename=report-${id}.html`);
+  res.setHeader('Content-Disposition', `attachment; filename=report-${safeReportId}.html`);
   res.send(html);
 });
 

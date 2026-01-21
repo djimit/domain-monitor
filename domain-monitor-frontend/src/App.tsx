@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState, SyntheticEvent, ReactElement } from 'react';
 import { CssBaseline, Container, AppBar, Toolbar, Typography, Box, Tabs, Tab } from '@mui/material';
 import DomainVariantGenerator from './components/DomainVariantGenerator';
 import ScanOrchestration from './components/ScanOrchestration';
@@ -6,19 +6,19 @@ import ResultsDashboard from './components/ResultsDashboard';
 import AlertsPanel from './components/AlertsPanel';
 import ReportsPanel from './components/ReportsPanel';
 
-function a11yProps(index: number) {
+function a11yProps(index: number): { id: string; 'aria-controls': string } {
   return {
     id: `main-tab-${index}`,
     'aria-controls': `main-tabpanel-${index}`,
   };
 }
 
-const App: React.FC = () => {
+const App = (): ReactElement => {
   const [tab, setTab] = useState(0);
   const [selectedVariants, setSelectedVariants] = useState<string[]>([]);
   const [scanId, setScanId] = useState<string | null>(null);
 
-  const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
+  const handleTabChange = (_event: SyntheticEvent, newValue: number): void => {
     setTab(newValue);
   };
 
