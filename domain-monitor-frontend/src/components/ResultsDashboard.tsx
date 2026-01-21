@@ -5,6 +5,12 @@ interface ResultsDashboardProps {
   scanId: string | null;
 }
 
+// Use environment variable for API URL - throw error if not set in production
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || (import.meta.env.MODE === 'production'
+  ? (() => { throw new Error('VITE_API_BASE_URL must be set in production'); })()
+  : 'http://localhost:3001');
+const API_VERSION = import.meta.env.VITE_API_VERSION || 'v1';
+
 const ResultsDashboard: React.FC<ResultsDashboardProps> = ({ scanId }) => {
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<any[]>([]);
@@ -15,7 +21,7 @@ const ResultsDashboard: React.FC<ResultsDashboardProps> = ({ scanId }) => {
     setLoading(true);
     setError(null);
     setResults([]);
-    fetch(`/api/v1/scans/${scanId}/results`)
+    fetch(`${API_BASE_URL}/api/${API_VERSION}/scans/${scanId}/results`)
       .then(res => {
         if (!res.ok) throw new Error('Failed to fetch scan results');
         return res.json();
@@ -33,13 +39,13 @@ const ResultsDashboard: React.FC<ResultsDashboardProps> = ({ scanId }) => {
         Results Dashboard
       </Typography>
       {!scanId ? (
-        <Alert severity="info">No scan started yet. Please start a scan to view results.</Alert>
+        <Alert severity="info"><span>No scan started yet. Please start a scan to view results.</span></Alert>
       ) : loading ? (
         <CircularProgress />
       ) : error ? (
-        <Alert severity="error">{error}</Alert>
+        <Alert severity="error"><span>{error}</span></Alert>
       ) : results.length === 0 ? (
-        <Alert severity="info">No results found for this scan.</Alert>
+        <Alert severity="info"><span>No results found for this scan.</span></Alert>
       ) : (
         <>
           <Typography variant="subtitle1" sx={{ mb: 2 }}>

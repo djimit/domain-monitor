@@ -51,7 +51,7 @@ const ReportsPanel: React.FC<ReportsPanelProps> = ({ scanId }) => {
         Reports Panel
       </Typography>
       {!scanId ? (
-        <Alert severity="info">No scan available. Please run a scan to generate a report.</Alert>
+        <Alert severity="info"><span>No scan available. Please run a scan to generate a report.</span></Alert>
       ) : (
         <>
           <Button
@@ -63,13 +63,15 @@ const ReportsPanel: React.FC<ReportsPanelProps> = ({ scanId }) => {
           >
             {loading ? <CircularProgress size={20} /> : 'Generate HTML Report'}
           </Button>
-          {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
+          {error && <Alert severity="error" sx={{ mt: 2 }}><span>{error}</span></Alert>}
           {downloadUrl && (
             <Alert severity="success" sx={{ mt: 2 }}>
-              Report ready!{' '}
-              <Link href={downloadUrl} target="_blank" rel="noopener">
-                Download HTML Report
-              </Link>
+              <span>
+                Report ready!{' '}
+                <Link href={downloadUrl} target="_blank" rel="noopener">
+                  Download HTML Report
+                </Link>
+              </span>
             </Alert>
           )}
         </>

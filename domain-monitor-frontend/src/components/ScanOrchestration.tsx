@@ -6,7 +6,12 @@ interface ScanOrchestrationProps {
   onScanStarted: (scanId: string) => void;
 }
 
-const API_URL = '/api/v1/scans';
+// Use environment variable for API URL - throw error if not set in production
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || (import.meta.env.MODE === 'production'
+  ? (() => { throw new Error('VITE_API_BASE_URL must be set in production'); })()
+  : 'http://localhost:3001');
+const API_VERSION = import.meta.env.VITE_API_VERSION || 'v1';
+const API_URL = `${API_BASE_URL}/api/${API_VERSION}/scans`;
 
 const ScanOrchestration: React.FC<ScanOrchestrationProps> = ({ variants, onScanStarted }) => {
   const [scanStarted, setScanStarted] = React.useState(false);
@@ -42,7 +47,7 @@ const ScanOrchestration: React.FC<ScanOrchestrationProps> = ({ variants, onScanS
         Scan Orchestration
       </Typography>
       {variants.length === 0 ? (
-        <Alert severity="info">No variants selected. Please generate and select variants first.</Alert>
+        <Alert severity="info"><span>No variants selected. Please generate and select variants first.</span></Alert>
       ) : (
         <>
           <Typography variant="subtitle1" sx={{ mb: 2 }}>
@@ -64,10 +69,10 @@ const ScanOrchestration: React.FC<ScanOrchestrationProps> = ({ variants, onScanS
           >
             {loading ? <CircularProgress size={20} /> : scanStarted ? 'Scan Started' : 'Start Scan'}
           </Button>
-          {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
+          {error && <Alert severity="error" sx={{ mt: 2 }}><span>{error}</span></Alert>}
           {scanId && (
             <Alert severity="success" sx={{ mt: 2 }}>
-              Scan started! Scan ID: {scanId}
+              <span>Scan started! Scan ID: {scanId}</span>
             </Alert>
           )}
         </>
