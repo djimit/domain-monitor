@@ -42,7 +42,7 @@ const DomainVariantGenerator: React.FC<VariantGeneratorProps> = ({ onVariantsSel
     }
   };
 
-  const handleToggle = (variant: string) => {
+  const handleToggle = (variant: string): void => {
     setSelected(prev =>
       prev.includes(variant)
         ? prev.filter(v => v !== variant)
@@ -70,7 +70,7 @@ const DomainVariantGenerator: React.FC<VariantGeneratorProps> = ({ onVariantsSel
       <TextField
         label="Domain or Company Name"
         value={input}
-        onChange={e => setInput(e.target.value)}
+        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setInput(e.target.value)}
         fullWidth
         sx={{ mb: 2 }}
       />
@@ -78,7 +78,7 @@ const DomainVariantGenerator: React.FC<VariantGeneratorProps> = ({ onVariantsSel
         Generate Variants
       </Button>
       {loading && <CircularProgress sx={{ ml: 2 }} size={24} />}
-      {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
+      {error && <Alert severity="error" sx={{ mt: 2 }}><span>{error}</span></Alert>}
       {variants.length > 0 && (
         <>
           <Typography variant="subtitle1" sx={{ mt: 3 }}>

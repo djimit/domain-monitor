@@ -18,15 +18,17 @@ export const logger = winston.createLogger({
     new winston.transports.Console({
       format: winston.format.combine(
         winston.format.colorize(),
-        winston.format.printf(
-          ({ level, message, timestamp, ...metadata }) => {
-            let msg = `${timestamp} [${level}]: ${message}`;
-            if (Object.keys(metadata).length > 0) {
-              msg += ` ${JSON.stringify(metadata)}`;
+        winston.format.printf((info) => {
+            const { level, message, timestamp, ...metadata } = info;
+            let msg = `${timestamp || new Date().toISOString()} [${level}]: ${message}`;
+            // Filter out default metadata we don't want to display
+            const filteredMeta = { ...metadata };
+            delete filteredMeta.service;
+            if (Object.keys(filteredMeta).length > 0) {
+              msg += ` ${JSON.stringify(filteredMeta)}`;
             }
             return msg;
-          }
-        )
+          })
       ),
     }),
   ],
