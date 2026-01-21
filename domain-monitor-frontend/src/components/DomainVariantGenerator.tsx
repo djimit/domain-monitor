@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Paper, Typography, TextField, Button, List, ListItem, ListItemButton, Checkbox, ListItemText, CircularProgress, Alert } from '@mui/material';
 
 interface VariantGeneratorProps {
@@ -35,8 +35,9 @@ const DomainVariantGenerator: React.FC<VariantGeneratorProps> = ({ onVariantsSel
       }
       const data = await res.json();
       setVariants(data.data.variants || []);
-    } catch (err: any) {
-      setError(err.message || 'Failed to generate variants. Please try again.');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to generate variants. Please try again.';
+      setError(message);
     } finally {
       setLoading(false);
     }

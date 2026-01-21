@@ -1,4 +1,4 @@
-import React from 'react';
+import { useState } from 'react';
 import { Paper, Typography, List, ListItem, ListItemText, Button, Alert, CircularProgress } from '@mui/material';
 
 interface ScanOrchestrationProps {
@@ -14,10 +14,10 @@ const API_VERSION = import.meta.env.VITE_API_VERSION || 'v1';
 const API_URL = `${API_BASE_URL}/api/${API_VERSION}/scans`;
 
 const ScanOrchestration: React.FC<ScanOrchestrationProps> = ({ variants, onScanStarted }) => {
-  const [scanStarted, setScanStarted] = React.useState(false);
-  const [scanId, setScanId] = React.useState<string | null>(null);
-  const [loading, setLoading] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
+  const [scanStarted, setScanStarted] = useState(false);
+  const [scanId, setScanId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleStartScan = async () => {
     setLoading(true);
@@ -34,8 +34,9 @@ const ScanOrchestration: React.FC<ScanOrchestrationProps> = ({ variants, onScanS
       setScanId(id);
       setScanStarted(true);
       if (id) onScanStarted(id);
-    } catch (err: any) {
-      setError(err.message || 'Unknown error');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'An unexpected error occurred';
+      setError(message);
     } finally {
       setLoading(false);
     }

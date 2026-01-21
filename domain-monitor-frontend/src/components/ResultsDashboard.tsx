@@ -1,5 +1,16 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Paper, Typography, CircularProgress, Alert, List, ListItem, ListItemText } from '@mui/material';
+
+interface ScanResult {
+  domain: string;
+  variant?: string;
+  dnsResolved: boolean;
+  httpStatus: number | null;
+  error: string | null;
+  status: 'scanned' | 'unreachable';
+  scannedAt?: string;
+  risk?: string;
+}
 
 interface ResultsDashboardProps {
   scanId: string | null;
@@ -13,7 +24,7 @@ const API_VERSION = import.meta.env.VITE_API_VERSION || 'v1';
 
 const ResultsDashboard: React.FC<ResultsDashboardProps> = ({ scanId }) => {
   const [loading, setLoading] = useState(false);
-  const [results, setResults] = useState<any[]>([]);
+  const [results, setResults] = useState<ScanResult[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -21,7 +32,7 @@ const ResultsDashboard: React.FC<ResultsDashboardProps> = ({ scanId }) => {
     setLoading(true);
     setError(null);
     setResults([]);
-    fetch(`${API_BASE_URL}/api/${API_VERSION}/scans/${scanId}/results`)
+    fetch(`${API_BASE_URL}/api/${API_VERSION}/scans/${encodeURIComponent(scanId)}/results`)
       .then(res => {
         if (!res.ok) throw new Error('Failed to fetch scan results');
         return res.json();
@@ -29,7 +40,10 @@ const ResultsDashboard: React.FC<ResultsDashboardProps> = ({ scanId }) => {
       .then(data => {
         setResults(data.data.results || []);
       })
-      .catch(err => setError(err.message || 'Unknown error'))
+      .catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : 'An unexpected error occurred';
+        setError(message);
+      })
       .finally(() => setLoading(false));
   }, [scanId]);
 
@@ -56,7 +70,7 @@ const ResultsDashboard: React.FC<ResultsDashboardProps> = ({ scanId }) => {
               <ListItem key={idx}>
                 <ListItemText
                   primary={result.domain || result.variant || 'Unknown'}
-                  secondary={result.status || result.risk || JSON.stringify(result)}
+                  secondary={`Status: ${result.status}${result.dnsResolved ? ' | DNS: Resolved' : ' | DNS: Not resolved'}${result.httpStatus ? ` | HTTP: ${result.httpStatus}` : ''}${result.error ? ` | Error: ${result.error}` : ''}`}
                 />
               </ListItem>
             ))}

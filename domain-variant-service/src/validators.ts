@@ -31,7 +31,7 @@ export const validateReportRequest = [
     .trim()
     .notEmpty()
     .withMessage('Scan ID is required')
-    .matches(/^scan_[a-z0-9]+$/)
+    .matches(/^scan_[a-f0-9]{32}$/)
     .withMessage('Invalid scan ID format'),
 ];
 
